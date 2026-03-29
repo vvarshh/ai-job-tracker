@@ -1,6 +1,6 @@
 streamlit
 langgraph
-langchain-anthropic
 langchain-core
+anthropic
 requests
 python-dotenv

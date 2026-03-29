@@ -15,8 +15,7 @@ import json
 import os
 from typing import Any, TypedDict
 
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage
+import anthropic
 from langgraph.graph import END, StateGraph
 
 from agent.prompts import SCORE_PROMPT
@@ -56,12 +55,7 @@ def score_jobs(state: PipelineState) -> PipelineState:
             job["match_reason"] = "⚠️ Add Anthropic API key to score this role."
         return {**state, "scored_jobs": state["raw_jobs"]}
 
-    llm = ChatAnthropic(
-        model="claude-3-haiku-20240307",
-        api_key=api_key,
-        max_tokens=150,
-    )
-
+    client = anthropic.Anthropic(api_key=api_key)
     profile = state["profile"]
     scored = []
 
@@ -76,19 +70,21 @@ def score_jobs(state: PipelineState) -> PipelineState:
             .replace("{description}", job["description"][:500])
         )
         try:
-            response = llm.invoke([HumanMessage(content=prompt)])
-            raw_content = response.content.strip()
-            # Strip markdown code fences if Claude wraps JSON in ```
-            if raw_content.startswith("```"):
-                raw_content = raw_content.split("```")[1]
-                if raw_content.startswith("json"):
-                    raw_content = raw_content[4:]
-            data = json.loads(raw_content.strip())
+            response = client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=150,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw_content = response.content[0].text.strip()
+            # Strip markdown fences if present
+            if "```" in raw_content:
+                raw_content = raw_content.split("```")[1].lstrip("json").strip()
+            data = json.loads(raw_content)
             job["match_score"] = max(0, min(10, int(data.get("score", 0))))
             job["match_reason"] = data.get("reason", "No reason provided.")
         except Exception as e:
             job["match_score"] = 0
-            job["match_reason"] = f"Scoring failed: {str(e)[:80]}"
+            job["match_reason"] = f"Scoring failed: {str(e)[:120]}"
         scored.append(job)
 
     return {**state, "scored_jobs": scored}
