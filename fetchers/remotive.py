@@ -25,11 +25,10 @@ def _normalise(job: dict) -> dict[str, Any]:
         "company": job.get("company_name", ""),
         "location": job.get("candidate_required_location") or "Remote",
         "salary": job.get("salary") or "Not specified",
+        "posted": job.get("publication_date", "")[:10],
         "description": _strip_html(job.get("description", ""))[:1000],
         "url": job.get("url", ""),
-        "source": "remotive",
-        "match_score": 0,
-        "match_reason": "",
+        "source": "🌐 Remotive",
     }
 
 

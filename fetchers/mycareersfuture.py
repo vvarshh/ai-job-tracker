@@ -55,16 +55,18 @@ def _normalise(job: dict) -> dict[str, Any]:
     position = job.get("position", {})
     company = job.get("postedCompany", {})
 
+    posted = job.get("metadata", {}).get("newPostingDate", "") or job.get("metadata", {}).get("originalPostingDate", "")
+    posted = posted[:10] if posted else ""
+
     return {
         "title": position.get("title", ""),
         "company": company.get("name", ""),
         "location": "Singapore",
         "salary": _parse_salary(job),
+        "posted": posted,
         "description": job.get("description", "")[:1000],
         "url": f"https://www.mycareersfuture.gov.sg/job/{job.get('uuid', '')}",
-        "source": "mycareersfuture",
-        "match_score": 0,
-        "match_reason": "",
+        "source": "🇸🇬 MyCareersFuture",
     }
 
 

@@ -53,12 +53,10 @@ def _normalise(job: dict) -> dict[str, Any]:
         "company": job.get("company_name", ""),
         "location": job.get("location", "Singapore"),
         "salary": salary,
+        "posted": posted,
         "description": job.get("description", "")[:1000],
         "url": url,
-        "source": "google_jobs",
-        "posted": posted,
-        "match_score": 0,
-        "match_reason": "",
+        "source": "🔍 Google Jobs",
     }
 
 
