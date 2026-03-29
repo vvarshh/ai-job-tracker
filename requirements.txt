@@ -1,0 +1,6 @@
+streamlit
+langgraph
+langchain-anthropic
+langchain-core
+requests
+python-dotenv
