@@ -2,26 +2,23 @@
 agent/prompts.py — LLM prompt templates for job scoring.
 """
 
-SCORE_PROMPT = """\
+BATCH_SCORE_PROMPT = """\
 You are a career coach helping an AI Engineer find their best job matches in Singapore.
 
-Given the candidate profile and a job listing, score the match from 1-10 and give a one-sentence reason.
+Score each job listing against the candidate profile. Return a JSON array — one object per job, in the same order.
 
 Rules:
-- 9-10: Near-perfect match (role is AI-native, uses their exact stack, Singapore-based)
+- 9-10: Near-perfect match (AI-native role, exact stack, Singapore-based)
 - 7-8: Strong match (AI-focused, most skills align)
 - 5-6: Partial match (some AI involvement, transferable skills)
 - 1-4: Weak match (minimal AI, wrong domain)
 
 Candidate Profile:
-{profile}
+PROFILE_PLACEHOLDER
 
-Job Title: {title}
-Company: {company}
-Location: {location}
-Salary: {salary}
-Description: {description}
+Jobs to score:
+JOBS_PLACEHOLDER
 
-Return ONLY valid JSON, no markdown, no explanation:
-{{"score": <int 1-10>, "reason": "<one sentence explaining the match>"}}
+Return ONLY a valid JSON array, no markdown, no explanation:
+[{"score": <int>, "reason": "<one sentence>"}, ...]
 """

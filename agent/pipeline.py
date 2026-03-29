@@ -1,124 +1,114 @@
 """
-agent/pipeline.py — LangGraph pipeline: fetch → score → rank.
+agent/pipeline.py — Fetch → Score → Rank pipeline.
 
-Nodes:
-  1. fetch_jobs  — pulls from all sources and merges
-  2. score_jobs  — LLM scores each job 1-10 against user profile
-  3. rank_jobs   — sorts by score descending
-
-Usage:
-    from agent.pipeline import run_pipeline
-    results = run_pipeline(profile="...", min_score=6)
+Fetches jobs from all sources, scores them all in ONE Claude API call,
+then ranks by score descending.
 """
 
 import json
 import os
-from typing import Any, TypedDict
+import re
+from typing import Any
 
 import anthropic
-from langgraph.graph import END, StateGraph
 
-from agent.prompts import SCORE_PROMPT
-from fetchers import remotive, mycareersfuture, serpapi
-
-
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
-
-class PipelineState(TypedDict):
-    profile: str
-    raw_jobs: list[dict[str, Any]]
-    scored_jobs: list[dict[str, Any]]
+from agent.prompts import BATCH_SCORE_PROMPT
+from fetchers import mycareersfuture, remotive, serpapi
 
 
-# ---------------------------------------------------------------------------
-# Nodes
-# ---------------------------------------------------------------------------
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and clean up whitespace."""
+    if not text:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&[a-zA-Z]+;", " ", text)   # HTML entities like &amp;
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
-def fetch_jobs(state: PipelineState) -> PipelineState:
-    """Pull jobs from all sources and merge into a single list."""
+
+def _sanitise(value: Any) -> str:
+    """Convert to string and remove problematic characters."""
+    s = str(value or "")
+    s = s.replace("\x00", "")  # null bytes
+    return s.strip()
+
+
+def fetch_all_jobs() -> list[dict]:
+    """Pull and merge jobs from all sources."""
     jobs: list[dict] = []
-    jobs.extend(mycareersfuture.fetch_jobs())  # free, no key, SG gov portal
-    jobs.extend(serpapi.fetch_jobs())           # Google Jobs (LinkedIn, Indeed, etc.)
-    jobs.extend(remotive.fetch_jobs())          # remote AI/ML roles
-    return {**state, "raw_jobs": jobs}
+    jobs.extend(mycareersfuture.fetch_jobs())
+    jobs.extend(serpapi.fetch_jobs())
+    jobs.extend(remotive.fetch_jobs())
+
+    # Clean descriptions
+    for job in jobs:
+        job["description"] = _strip_html(_sanitise(job.get("description", "")))
+
+    return jobs
 
 
-def score_jobs(state: PipelineState) -> PipelineState:
-    """Score each job against the user profile using Claude."""
+def score_all_jobs(jobs: list[dict], profile: str) -> list[dict]:
+    """Score all jobs in a single Claude API call."""
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
-        # No key — return jobs unscored so UI can still show them
-        for job in state["raw_jobs"]:
+        for job in jobs:
             job["match_score"] = 0
-            job["match_reason"] = "⚠️ Add Anthropic API key to score this role."
-        return {**state, "scored_jobs": state["raw_jobs"]}
+            job["match_reason"] = "⚠️ Add Anthropic API key in the sidebar to score jobs."
+        return jobs
 
-    client = anthropic.Anthropic(api_key=api_key)
-    profile = state["profile"]
-    scored = []
-
-    for job in state["raw_jobs"]:
-        prompt = (
-            SCORE_PROMPT
-            .replace("{profile}", profile)
-            .replace("{title}", job["title"])
-            .replace("{company}", job["company"])
-            .replace("{location}", job["location"])
-            .replace("{salary}", job["salary"])
-            .replace("{description}", job["description"][:500])
+    # Build compact job list for the prompt
+    jobs_text = ""
+    for i, job in enumerate(jobs):
+        desc = job["description"][:300]
+        jobs_text += (
+            f"{i+1}. {_sanitise(job['title'])} at {_sanitise(job['company'])} "
+            f"({_sanitise(job['location'])}) | {_sanitise(job['salary'])}\n"
+            f"   {desc}\n\n"
         )
-        try:
-            response = client.messages.create(
-                model="claude-3-5-haiku-20241022",
-                max_tokens=150,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw_content = response.content[0].text.strip()
-            # Strip markdown fences if present
-            if "```" in raw_content:
-                raw_content = raw_content.split("```")[1].lstrip("json").strip()
-            data = json.loads(raw_content)
-            job["match_score"] = max(0, min(10, int(data.get("score", 0))))
-            job["match_reason"] = data.get("reason", "No reason provided.")
-        except Exception as e:
+
+    prompt = (
+        BATCH_SCORE_PROMPT
+        .replace("PROFILE_PLACEHOLDER", _sanitise(profile))
+        .replace("JOBS_PLACEHOLDER", jobs_text)
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+
+        # Strip markdown fences if present
+        if "```" in raw:
+            raw = raw.split("```")[1].lstrip("json").strip()
+
+        scores = json.loads(raw)
+
+        for i, job in enumerate(jobs):
+            if i < len(scores):
+                job["match_score"] = max(0, min(10, int(scores[i].get("score", 0))))
+                job["match_reason"] = scores[i].get("reason", "")
+            else:
+                job["match_score"] = 0
+                job["match_reason"] = "Not scored."
+
+    except Exception as e:
+        error_msg = str(e)[:120]
+        for job in jobs:
             job["match_score"] = 0
-            job["match_reason"] = f"Scoring failed: {str(e)[:120]}"
-        scored.append(job)
+            job["match_reason"] = f"Scoring error: {error_msg}"
 
-    return {**state, "scored_jobs": scored}
-
-
-def rank_jobs(state: PipelineState) -> PipelineState:
-    """Sort jobs by match score descending."""
-    ranked = sorted(state["scored_jobs"], key=lambda j: j["match_score"], reverse=True)
-    return {**state, "scored_jobs": ranked}
+    return jobs
 
 
-# ---------------------------------------------------------------------------
-# Graph
-# ---------------------------------------------------------------------------
-
-def _build_graph() -> Any:
-    g = StateGraph(PipelineState)
-    g.add_node("fetch_jobs", fetch_jobs)
-    g.add_node("score_jobs", score_jobs)
-    g.add_node("rank_jobs", rank_jobs)
-    g.set_entry_point("fetch_jobs")
-    g.add_edge("fetch_jobs", "score_jobs")
-    g.add_edge("score_jobs", "rank_jobs")
-    g.add_edge("rank_jobs", END)
-    return g.compile()
-
-
-_graph = _build_graph()
-
-
-def run_pipeline(profile: str, min_score: int = 0) -> list[dict[str, Any]]:
-    """Run the full fetch → score → rank pipeline and return filtered results."""
-    result = _graph.invoke({"profile": profile, "raw_jobs": [], "scored_jobs": []})
-    jobs = result["scored_jobs"]
+def run_pipeline(profile: str, min_score: int = 0) -> list[dict]:
+    """Run the full pipeline and return ranked, filtered results."""
+    jobs = fetch_all_jobs()
+    jobs = score_all_jobs(jobs, profile)
+    jobs = sorted(jobs, key=lambda j: j["match_score"], reverse=True)
     if min_score > 0:
         jobs = [j for j in jobs if j["match_score"] >= min_score]
     return jobs

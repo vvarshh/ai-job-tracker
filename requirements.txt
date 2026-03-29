@@ -1,6 +1,4 @@
 streamlit
-langgraph
-langchain-core
 anthropic
 requests
 python-dotenv
