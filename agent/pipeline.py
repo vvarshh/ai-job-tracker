@@ -48,10 +48,18 @@ def fetch_jobs(state: PipelineState) -> PipelineState:
 
 def score_jobs(state: PipelineState) -> PipelineState:
     """Score each job against the user profile using Claude."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        # No key — return jobs unscored so UI can still show them
+        for job in state["raw_jobs"]:
+            job["match_score"] = 0
+            job["match_reason"] = "⚠️ Add Anthropic API key to score this role."
+        return {**state, "scored_jobs": state["raw_jobs"]}
+
     llm = ChatAnthropic(
-        model="claude-3-haiku-20240307",  # fast + cheap for batch scoring
-        api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-        max_tokens=100,
+        model="claude-3-haiku-20240307",
+        api_key=api_key,
+        max_tokens=150,
     )
 
     profile = state["profile"]
@@ -68,12 +76,18 @@ def score_jobs(state: PipelineState) -> PipelineState:
         )
         try:
             response = llm.invoke([HumanMessage(content=prompt)])
-            data = json.loads(response.content.strip())
-            job["match_score"] = int(data.get("score", 0))
-            job["match_reason"] = data.get("reason", "")
-        except Exception:
+            raw_content = response.content.strip()
+            # Strip markdown code fences if Claude wraps JSON in ```
+            if raw_content.startswith("```"):
+                raw_content = raw_content.split("```")[1]
+                if raw_content.startswith("json"):
+                    raw_content = raw_content[4:]
+            data = json.loads(raw_content.strip())
+            job["match_score"] = max(0, min(10, int(data.get("score", 0))))
+            job["match_reason"] = data.get("reason", "No reason provided.")
+        except Exception as e:
             job["match_score"] = 0
-            job["match_reason"] = "Could not score this role."
+            job["match_reason"] = f"Scoring failed: {str(e)[:80]}"
         scored.append(job)
 
     return {**state, "scored_jobs": scored}

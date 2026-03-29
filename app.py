@@ -60,7 +60,7 @@ with st.sidebar:
     st.divider()
 
     st.subheader("🔍 Filters")
-    min_score = st.slider("Minimum match score", min_value=1, max_value=10, value=5)
+    min_score = st.slider("Minimum match score", min_value=0, max_value=10, value=0)
     sources = st.multiselect(
         "Job sources",
         options=["mycareersfuture", "google_jobs", "remotive"],
@@ -77,6 +77,11 @@ st.caption("Fetches live AI/ML roles, scores them against your profile using Cla
 col1, col2 = st.columns([3, 1])
 with col2:
     run_btn = st.button("🔄 Fetch & Score Jobs", type="primary", use_container_width=True)
+
+if not os.getenv("ANTHROPIC_API_KEY"):
+    st.warning("⚠️ No Anthropic API key set — jobs will be fetched but scores will all be 0. Add your key in the sidebar.")
+if not os.getenv("SERPAPI_KEY"):
+    st.info("ℹ️ No SerpAPI key set — LinkedIn/Indeed/Glassdoor results via Google Jobs will be skipped. MyCareersFuture + Remotive will still work.")
 
 # ---------------------------------------------------------------------------
 # Session state
