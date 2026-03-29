@@ -66,13 +66,14 @@ def score_jobs(state: PipelineState) -> PipelineState:
     scored = []
 
     for job in state["raw_jobs"]:
-        prompt = SCORE_PROMPT.format(
-            profile=profile,
-            title=job["title"],
-            company=job["company"],
-            location=job["location"],
-            salary=job["salary"],
-            description=job["description"][:500],
+        prompt = (
+            SCORE_PROMPT
+            .replace("{profile}", profile)
+            .replace("{title}", job["title"])
+            .replace("{company}", job["company"])
+            .replace("{location}", job["location"])
+            .replace("{salary}", job["salary"])
+            .replace("{description}", job["description"][:500])
         )
         try:
             response = llm.invoke([HumanMessage(content=prompt)])
